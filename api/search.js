@@ -18,24 +18,25 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Step 1. 네이버 블로그 + 지식iN 병렬 검색
-    // 블로그: "임산부 {음식} 음식 먹어도 되나요" — 실제 경험 위주
-    // 지식iN: "임산부 {음식} 섭취 안전" — Q&A 전문 답변 위주
-    const blogQuery = encodeURIComponent(`임산부 ${q} 음식 먹어도 되나요`);
-    const kinQuery  = encodeURIComponent(`임산부 ${q} 섭취 안전`);
+    // Step 1. 네이버 블로그 + 지식iN + 뉴스 병렬 검색 (더 넓게)
+    const blogQuery = encodeURIComponent(`임산부 ${q} 먹어도 되나요`);
+    const kinQuery  = encodeURIComponent(`임산부 ${q}`);
+    const newsQuery = encodeURIComponent(`임신 ${q} 섭취`);
     const naverHeaders = {
       'X-Naver-Client-Id':     naverClientId,
       'X-Naver-Client-Secret': naverClientSecret,
     };
 
-    const [blogRes, kinRes] = await Promise.all([
-      fetch(`https://openapi.naver.com/v1/search/blog.json?query=${blogQuery}&display=3&sort=sim`, { headers: naverHeaders }),
-      fetch(`https://openapi.naver.com/v1/search/kin.json?query=${kinQuery}&display=2&sort=sim`,   { headers: naverHeaders }),
+    const [blogRes, kinRes, newsRes] = await Promise.all([
+      fetch(`https://openapi.naver.com/v1/search/blog.json?query=${blogQuery}&display=7&sort=sim`, { headers: naverHeaders }),
+      fetch(`https://openapi.naver.com/v1/search/kin.json?query=${kinQuery}&display=5&sort=sim`,   { headers: naverHeaders }),
+      fetch(`https://openapi.naver.com/v1/search/news.json?query=${newsQuery}&display=3&sort=sim`, { headers: naverHeaders }),
     ]);
 
-    const [blogData, kinData] = await Promise.all([
+    const [blogData, kinData, newsData] = await Promise.all([
       blogRes.json(),
       kinRes.json(),
+      newsRes.json(),
     ]);
 
     // HTML 태그 및 특수문자 제거
@@ -62,8 +63,15 @@ export default async function handler(req, res) {
       type:    '지식iN',
     }));
 
-    // 지식iN을 앞에 배치 (더 신뢰도 높음)
-    const allItems = [...kinItems, ...blogItems];
+    const newsItems = (newsData.items || []).map(item => ({
+      title:   stripHtml(item.title),
+      content: stripHtml(item.description),
+      url:     item.originallink || item.link,
+      type:    '뉴스',
+    }));
+
+    // 신뢰도 순: 지식iN > 뉴스 > 블로그
+    const allItems = [...kinItems, ...newsItems, ...blogItems];
 
     if (allItems.length === 0) {
       return res.status(200).json({
@@ -77,16 +85,18 @@ export default async function handler(req, res) {
     }
 
     // Step 2. Claude Haiku로 분석 (최저비용 모델)
-    const searchContext = allItems
-      .map((item, i) => `[${i + 1}] ${item.title}: ${item.content}`)
+    // 상위 8개만 전달해서 토큰 절약
+    const topItems = allItems.slice(0, 8);
+    const searchContext = topItems
+      .map((item, i) => `[${i + 1}][${item.type}] ${item.title}: ${item.content}`)
       .join('\n');
 
     const prompt = `임산부 영양 전문가로서 "${q}"의 임신 중 섭취 안전 여부를 아래 검색 결과 기반으로 분석하세요.
 
 ${searchContext}
 
-JSON만 출력:
-{"food":"${q}","status":"safe|caution|avoid|unknown","summary":"20자이내","detail":"3문장","tips":"1문장또는null"}`;
+JSON만 출력(다른 텍스트 없이):
+{"food":"${q}","status":"safe또는caution또는avoid또는unknown","summary":"25자이내한줄요약","detail":"임신중주의사항과근거포함3~4문장","tips":"실용적팁1~2문장또는null"}`;
 
     const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -97,7 +107,7 @@ JSON만 출력:
       },
       body: JSON.stringify({
         model:      'claude-haiku-4-5-20251001',
-        max_tokens: 300,
+        max_tokens: 400,
         messages:   [{ role: 'user', content: prompt }],
       }),
     });
@@ -121,7 +131,7 @@ JSON만 출력:
 
     return res.status(200).json({
       ...parsed,
-      sources: allItems.map(i => ({ title: i.title, link: i.url, type: i.type })),
+      sources: topItems.map(i => ({ title: i.title, link: i.url, type: i.type })),
     });
 
   } catch (err) {
