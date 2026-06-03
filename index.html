@@ -482,30 +482,30 @@ function searchDB(q) {
 // ── 웹 검색 결과 렌더링 ──
 function renderWebResult(q, data) {
   const statusLabel = {
-    safe:    { text: '섭취 가능 (추정)', cls: 'safe',    icon: '✅' },
-    caution: { text: '주의 필요 (추정)', cls: 'caution', icon: '⚠️' },
-    avoid:   { text: '피하는 것이 좋음 (추정)', cls: 'avoid', icon: '🚫' },
-    unknown: { text: '정보 불충분',      cls: 'caution', icon: '🔍' },
+    safe:    { text: '섭취 가능',         cls: 'safe',    icon: '✅' },
+    caution: { text: '주의 필요',         cls: 'caution', icon: '⚠️' },
+    avoid:   { text: '피하는 것이 좋아요', cls: 'avoid',   icon: '🚫' },
+    unknown: { text: '정보 불충분',       cls: 'caution', icon: '🔍' },
   };
-  const s = statusLabel[data.heuristicStatus] || statusLabel.unknown;
+  const s = statusLabel[data.status] || statusLabel.unknown;
 
-  const webItems = (data.results || []).map(r => `
+  // AI가 정리한 출처 링크
+  const sourceItems = (data.sources || []).map(r => `
     <div class="web-item">
       <a href="${r.link}" target="_blank" rel="noopener">${r.title}</a>
-      <p>${r.snippet}</p>
     </div>`).join('');
 
   document.getElementById('resultView').innerHTML = `
-    <p style="font-size:0.82rem;color:#bfa0a8;margin-bottom:1rem;">🌐 웹에서 검색했어요 · "${q}" 검색 결과</p>
+    <p style="font-size:0.82rem;color:#bfa0a8;margin-bottom:1rem;">🤖 AI가 웹 검색 결과를 분석했어요 · "${q}"</p>
     <div class="result-card ${s.cls}">
       <div class="status-badge badge-${s.cls}">${s.icon} ${s.text}</div>
-      <div class="result-food-name">${q}</div>
-      <p class="result-summary">DB에 등록되지 않은 음식이에요. 웹 검색 결과를 참고하세요.</p>
-      <p class="result-detail" style="font-size:0.82rem;color:#bfa0a8;">
-        ※ AI가 검색 결과를 분석한 추정값입니다. 반드시 산부인과 의사와 상담하세요.
-      </p>
+      <div class="result-food-name">${data.food || q}</div>
+      <p class="result-summary">${data.summary || ''}</p>
+      <p class="result-detail">${data.detail || ''}</p>
+      ${data.tips ? `<p class="result-tips">${data.tips}</p>` : ''}
+      <p style="margin-top:0.75rem;font-size:0.75rem;color:#bfa0a8;">※ 웹 검색 기반 AI 분석 결과입니다. 반드시 산부인과 의사와 상담하세요.</p>
     </div>
-    ${webItems ? `<div class="web-results"><h3>🌐 관련 검색 결과</h3>${webItems}</div>` : ''}
+    ${sourceItems ? `<div class="web-results"><h3>📎 참고한 검색 결과</h3>${sourceItems}</div>` : ''}
     ${backBtn()}`;
 }
 
