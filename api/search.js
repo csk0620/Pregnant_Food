@@ -116,14 +116,23 @@ status 판단 기준:
     );
 
     const geminiData = await geminiRes.json();
+    console.log('Gemini status:', geminiRes.status);
+    console.log('Gemini response:', JSON.stringify(geminiData).slice(0, 500));
 
     if (!geminiRes.ok) {
-      throw new Error(geminiData.error?.message || 'Gemini API 오류');
+      throw new Error(`Gemini ${geminiRes.status}: ${geminiData.error?.message || JSON.stringify(geminiData)}`);
     }
 
     const rawText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    if (!rawText) throw new Error('Gemini 응답이 비어있습니다: ' + JSON.stringify(geminiData));
+
     const cleanText = rawText.replace(/```json|```/g, '').trim();
-    const parsed = JSON.parse(cleanText);
+    let parsed;
+    try {
+      parsed = JSON.parse(cleanText);
+    } catch (e) {
+      throw new Error('JSON 파싱 실패: ' + cleanText.slice(0, 200));
+    }
 
     return res.status(200).json({
       ...parsed,
