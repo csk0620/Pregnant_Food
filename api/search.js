@@ -1,5 +1,5 @@
 // Vercel Serverless Function
-// Google CSE로 검색 후 Claude API로 결과를 정리합니다
+// Tavily API로 검색 후 Claude API로 결과를 정리합니다
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -9,30 +9,37 @@ export default async function handler(req, res) {
   const { q } = req.query;
   if (!q) return res.status(400).json({ error: 'q 파라미터가 필요합니다' });
 
-  const googleApiKey = process.env.GOOGLE_CSE_API_KEY;
-  const cx           = process.env.GOOGLE_CSE_CX;
+  const tavilyApiKey = process.env.TAVILY_API_KEY;
   const claudeApiKey = process.env.CLAUDE_API_KEY;
 
-  if (!googleApiKey || !cx || !claudeApiKey) {
+  if (!tavilyApiKey || !claudeApiKey) {
     return res.status(500).json({ error: '서버 환경변수가 설정되지 않았습니다' });
   }
 
   try {
-    // ── Step 1. Google CSE 검색 ──
-    const query = encodeURIComponent(`임산부 임신 중 ${q} 먹어도 되나요`);
-    const googleUrl = `https://www.googleapis.com/customsearch/v1?key=${googleApiKey}&cx=${cx}&q=${query}&num=5&hl=ko&gl=kr`;
+    // ── Step 1. Tavily 검색 ──
+    const tavilyRes = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: tavilyApiKey,
+        query:   `임산부 임신 중 ${q} 먹어도 되나요 안전`,
+        search_depth: 'basic',
+        max_results:  5,
+        include_answer: false,
+      }),
+    });
 
-    const googleRes  = await fetch(googleUrl);
-    const googleData = await googleRes.json();
+    const tavilyData = await tavilyRes.json();
 
-    if (!googleRes.ok) {
-      return res.status(googleRes.status).json({ error: googleData.error?.message || 'Google API 오류' });
+    if (!tavilyRes.ok) {
+      return res.status(tavilyRes.status).json({ error: tavilyData.error || 'Tavily API 오류' });
     }
 
-    const items = (googleData.items || []).map(item => ({
-      title:   item.title,
-      snippet: item.snippet,
-      link:    item.link,
+    const items = (tavilyData.results || []).map(r => ({
+      title:   r.title,
+      content: r.content,
+      url:     r.url,
     }));
 
     if (items.length === 0) {
@@ -48,7 +55,7 @@ export default async function handler(req, res) {
 
     // ── Step 2. Claude API로 정리 ──
     const searchContext = items
-      .map((item, i) => `[${i + 1}] ${item.title}\n${item.snippet}`)
+      .map((item, i) => `[${i + 1}] ${item.title}\n${item.content}`)
       .join('\n\n');
 
     const prompt = `당신은 임산부 영양 전문가입니다. 아래 웹 검색 결과를 바탕으로 "${q}"이(가) 임신 중 섭취해도 되는지 분석해 주세요.
@@ -71,7 +78,7 @@ status 기준:
 - avoid: 가능하면 피하는 것이 좋음
 - unknown: 검색 결과만으로 판단이 어려움`;
 
-    const claudeRes  = await fetch('https://api.anthropic.com/v1/messages', {
+    const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type':      'application/json',
@@ -79,7 +86,7 @@ status 기준:
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model:      'claude-haiku-4-5-20251001',  // 빠르고 저렴한 모델
+        model:      'claude-haiku-4-5-20251001',
         max_tokens: 600,
         messages:   [{ role: 'user', content: prompt }],
       }),
@@ -101,7 +108,7 @@ status 기준:
 
     return res.status(200).json({
       ...parsed,
-      sources: items.map(i => ({ title: i.title, link: i.link })),
+      sources: items.map(i => ({ title: i.title, link: i.url })),
     });
 
   } catch (err) {
