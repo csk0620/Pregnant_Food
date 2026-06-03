@@ -492,6 +492,7 @@ function renderWebResult(q, data) {
   const sourceItems = (data.sources || []).map(r => `
     <div class="web-item">
       <a href="${r.link}" target="_blank" rel="noopener">${r.title}</a>
+      <span style="font-size:0.75rem;color:#bfa0a8;">${r.type || ''}</span>
     </div>`).join('');
 
   document.getElementById('resultView').innerHTML = `
