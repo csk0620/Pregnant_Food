@@ -19,15 +19,18 @@ export default async function handler(req, res) {
 
   try {
     // Step 1. 네이버 블로그 + 지식iN 병렬 검색
-    const query = encodeURIComponent(`임산부 ${q}`);
+    // 블로그: "임산부 {음식} 음식 먹어도 되나요" — 실제 경험 위주
+    // 지식iN: "임산부 {음식} 섭취 안전" — Q&A 전문 답변 위주
+    const blogQuery = encodeURIComponent(`임산부 ${q} 음식 먹어도 되나요`);
+    const kinQuery  = encodeURIComponent(`임산부 ${q} 섭취 안전`);
     const naverHeaders = {
       'X-Naver-Client-Id':     naverClientId,
       'X-Naver-Client-Secret': naverClientSecret,
     };
 
     const [blogRes, kinRes] = await Promise.all([
-      fetch(`https://openapi.naver.com/v1/search/blog.json?query=${query}&display=5&sort=sim`, { headers: naverHeaders }),
-      fetch(`https://openapi.naver.com/v1/search/kin.json?query=${query}&display=3&sort=sim`,  { headers: naverHeaders }),
+      fetch(`https://openapi.naver.com/v1/search/blog.json?query=${blogQuery}&display=5&sort=sim`, { headers: naverHeaders }),
+      fetch(`https://openapi.naver.com/v1/search/kin.json?query=${kinQuery}&display=3&sort=sim`,   { headers: naverHeaders }),
     ]);
 
     const [blogData, kinData] = await Promise.all([
