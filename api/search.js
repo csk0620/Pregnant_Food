@@ -11,9 +11,9 @@ export default async function handler(req, res) {
 
   const naverClientId     = process.env.NAVER_CLIENT_ID;
   const naverClientSecret = process.env.NAVER_CLIENT_SECRET;
-  const geminiApiKey      = process.env.GEMINI_API_KEY;
+  const claudeApiKey      = process.env.CLAUDE_API_KEY;
 
-  if (!naverClientId || !naverClientSecret || !geminiApiKey) {
+  if (!naverClientId || !naverClientSecret || !claudeApiKey) {
     return res.status(500).json({ error: '서버 환경변수가 설정되지 않았습니다' });
   }
 
@@ -29,8 +29,8 @@ export default async function handler(req, res) {
     };
 
     const [blogRes, kinRes] = await Promise.all([
-      fetch(`https://openapi.naver.com/v1/search/blog.json?query=${blogQuery}&display=5&sort=sim`, { headers: naverHeaders }),
-      fetch(`https://openapi.naver.com/v1/search/kin.json?query=${kinQuery}&display=3&sort=sim`,   { headers: naverHeaders }),
+      fetch(`https://openapi.naver.com/v1/search/blog.json?query=${blogQuery}&display=3&sort=sim`, { headers: naverHeaders }),
+      fetch(`https://openapi.naver.com/v1/search/kin.json?query=${kinQuery}&display=2&sort=sim`,   { headers: naverHeaders }),
     ]);
 
     const [blogData, kinData] = await Promise.all([
@@ -76,62 +76,47 @@ export default async function handler(req, res) {
       });
     }
 
-    // Step 2. Gemini로 분석
+    // Step 2. Claude Haiku로 분석 (최저비용 모델)
     const searchContext = allItems
-      .map((item, i) => `[${i + 1}][${item.type}] ${item.title}\n${item.content}`)
-      .join('\n\n');
+      .map((item, i) => `[${i + 1}] ${item.title}: ${item.content}`)
+      .join('\n');
 
-    const prompt = `당신은 임산부 영양 전문가입니다. 아래 한국 웹 검색 결과(블로그, 지식iN)를 바탕으로 "${q}"이(가) 임신 중 섭취해도 되는지 종합적으로 분석해 주세요.
+    const prompt = `임산부 영양 전문가로서 "${q}"의 임신 중 섭취 안전 여부를 아래 검색 결과 기반으로 분석하세요.
 
-[검색 결과]
 ${searchContext}
 
-반드시 아래 JSON 형식으로만 응답하세요. 마크다운이나 다른 텍스트 없이 JSON만 출력하세요:
-{
-  "food": "음식 이름",
-  "status": "safe" | "caution" | "avoid" | "unknown",
-  "summary": "한 줄 요약 (25자 이내)",
-  "detail": "상세 설명 (4~5문장. 임신 중 주의사항, 위험 요소, 영양 정보, 섭취 가능 여부 근거 포함. 여러 출처 내용을 종합)",
-  "tips": "실용적인 팁, 조리법 또는 대체 식품 (2~3문장, 없으면 null)"
-}
+JSON만 출력:
+{"food":"${q}","status":"safe|caution|avoid|unknown","summary":"20자이내","detail":"3문장","tips":"1문장또는null"}`;
 
-status 판단 기준:
-- safe: 임신 중 안전하게 섭취 가능
-- caution: 소량·조건부 섭취 가능하거나 주의가 필요한 경우
-- avoid: 임신 중 피하는 것이 권장되는 경우
-- unknown: 판단하기 어려운 경우
+    const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type':      'application/json',
+        'x-api-key':         claudeApiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model:      'claude-haiku-4-5-20251001',
+        max_tokens: 300,
+        messages:   [{ role: 'user', content: prompt }],
+      }),
+    });
 
-중요: 의학적으로 신뢰할 수 있는 정보를 우선하고, 상충되는 의견이 있으면 더 안전한 방향으로 판단하세요.`;
+    const claudeData = await claudeRes.json();
+    console.log('Claude status:', claudeRes.status);
 
-    const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-8b:generateContent?key=${geminiApiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.2, maxOutputTokens: 800 },
-        }),
-      }
-    );
-
-    const geminiData = await geminiRes.json();
-    console.log('Gemini status:', geminiRes.status);
-    console.log('Gemini response:', JSON.stringify(geminiData).slice(0, 500));
-
-    if (!geminiRes.ok) {
-      throw new Error(`Gemini ${geminiRes.status}: ${geminiData.error?.message || JSON.stringify(geminiData)}`);
+    if (!claudeRes.ok) {
+      throw new Error(`Claude ${claudeRes.status}: ${claudeData.error?.message}`);
     }
 
-    const rawText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    if (!rawText) throw new Error('Gemini 응답이 비어있습니다: ' + JSON.stringify(geminiData));
+    const rawText = claudeData.content?.map(b => b.text || '').join('').replace(/```json|```/g, '').trim();
+    if (!rawText) throw new Error('Claude 응답이 비어있습니다');
 
-    const cleanText = rawText.replace(/```json|```/g, '').trim();
     let parsed;
     try {
-      parsed = JSON.parse(cleanText);
+      parsed = JSON.parse(rawText);
     } catch (e) {
-      throw new Error('JSON 파싱 실패: ' + cleanText.slice(0, 200));
+      throw new Error('JSON 파싱 실패: ' + rawText.slice(0, 200));
     }
 
     return res.status(200).json({
