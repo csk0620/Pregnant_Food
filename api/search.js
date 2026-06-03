@@ -104,7 +104,7 @@ status 판단 기준:
 중요: 의학적으로 신뢰할 수 있는 정보를 우선하고, 상충되는 의견이 있으면 더 안전한 방향으로 판단하세요.`;
 
     const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${geminiApiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-8b:generateContent?key=${geminiApiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
