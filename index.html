@@ -333,7 +333,7 @@ footer {
 <header>
   <div class="logo">🌸</div>
   <h1>복덩이 안심 먹거리</h1>
-  <p>임신 중 궁금한 음식, 바로 확인하세요<br>네이버 검색 + AI 분석으로 실시간 안전 정보 제공</p>
+  <p>임신 중 궁금한 음식, 바로 확인하세요<br>300가지 식품 DB · 없는 음식은 웹에서 실시간 검색</p>
   <div class="search-wrap">
     <div class="search-box">
       <input id="searchInput" type="text" placeholder="음식 이름 입력 (예: 연어, 커피, 삼겹살…)" autocomplete="off" />
@@ -357,18 +357,25 @@ footer {
 </header>
 
 <main>
-  <!-- 홈 안내 화면 -->
+  <!-- 초기 홈 화면 -->
   <div id="homeView">
     <div class="stats-bar">
       <div class="stat"><span class="stat-dot dot-safe"></span> 섭취 가능</div>
       <div class="stat"><span class="stat-dot dot-caution"></span> 주의 필요</div>
       <div class="stat"><span class="stat-dot dot-avoid"></span> 피하는 게 좋아요</div>
     </div>
-    <div class="empty-state">
-      <div class="icon">🔍</div>
-      <h2>궁금한 음식을 검색해보세요</h2>
-      <p>위 검색창에 음식 이름을 입력하면<br>네이버 검색 결과를 AI가 분석해서<br>임신 중 안전 여부를 알려드려요</p>
+    <div class="filter-row" id="filterRow">
+      <button class="filter-btn active" data-cat="전체">전체</button>
+      <button class="filter-btn" data-cat="해산물">🐟 해산물</button>
+      <button class="filter-btn" data-cat="육류">🥩 육류</button>
+      <button class="filter-btn" data-cat="채소">🥦 채소</button>
+      <button class="filter-btn" data-cat="과일">🍎 과일</button>
+      <button class="filter-btn" data-cat="유제품/달걀">🥛 유제품</button>
+      <button class="filter-btn" data-cat="음료">☕ 음료</button>
+      <button class="filter-btn" data-cat="곡물">🌾 곡물</button>
+      <button class="filter-btn" data-cat="콩류">🫘 콩류</button>
     </div>
+    <div id="categoryList"></div>
   </div>
 
   <!-- 검색 결과 화면 -->
@@ -384,6 +391,39 @@ footer {
 <footer>🌸 복덩이 안심 먹거리 · 임산부 음식 안전 검색 · 의학적 조언을 대체하지 않습니다</footer>
 
 <script>
+// ── 데이터 로드 ──
+let foodsDB = [];
+fetch('./data/foods.json')
+  .then(r => r.json())
+  .then(data => {
+    foodsDB = data.foods;
+    renderCategoryList('전체');
+  })
+  .catch(() => console.error('DB 로드 실패'));
+
+// ── 카테고리 목록 렌더링 ──
+function renderCategoryList(cat) {
+  const list = cat === '전체' ? foodsDB : foodsDB.filter(f => f.category === cat);
+  const el = document.getElementById('categoryList');
+
+  if (!list.length) { el.innerHTML = '<p style="color:#bfa0a8;text-align:center;padding:2rem 0;">해당 카테고리에 음식이 없습니다</p>'; return; }
+
+  // 안전도 순 정렬: avoid → caution → safe
+  const order = { avoid: 0, caution: 1, safe: 2 };
+  const sorted = [...list].sort((a, b) => order[a.status] - order[b.status]);
+
+  el.innerHTML = sorted.map(f => cardHTML(f)).join('');
+}
+
+// ── 카테고리 필터 버튼 ──
+document.getElementById('filterRow').addEventListener('click', e => {
+  const btn = e.target.closest('.filter-btn');
+  if (!btn) return;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderCategoryList(btn.dataset.cat);
+});
+
 // ── 검색 ──
 document.getElementById('searchInput').addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
 document.getElementById('searchBtn').addEventListener('click', doSearch);
@@ -401,6 +441,18 @@ function doSearch() {
   showView('result');
   setLoading(true);
 
+  // ① 내장 DB에서 검색
+  const match = searchDB(q);
+  if (match.length > 0) {
+    setLoading(false);
+    document.getElementById('resultView').innerHTML =
+      `<p style="font-size:0.82rem;color:#bfa0a8;margin-bottom:1rem;">📋 DB에서 찾았어요 · "${q}" 검색 결과</p>` +
+      match.map(f => cardHTML(f)).join('') +
+      backBtn();
+    return;
+  }
+
+  // ② 없으면 서버리스 API로 웹 검색
   fetch(`/api/search?q=${encodeURIComponent(q)}`)
     .then(r => r.json())
     .then(data => {
@@ -418,36 +470,62 @@ function doSearch() {
     });
 }
 
+// ── DB 검색 ──
+function searchDB(q) {
+  const lq = q.toLowerCase().replace(/\s/g, '');
+  return foodsDB.filter(f => {
+    const names = [f.name, ...(f.aliases || [])].map(n => n.toLowerCase().replace(/\s/g, ''));
+    return names.some(n => n.includes(lq) || lq.includes(n));
+  });
+}
+
 // ── 웹 검색 결과 렌더링 ──
 function renderWebResult(q, data) {
   const statusLabel = {
-    safe:    { text: '섭취 가능',         cls: 'safe',    icon: '✅' },
-    caution: { text: '주의 필요',         cls: 'caution', icon: '⚠️' },
-    avoid:   { text: '피하는 것이 좋아요', cls: 'avoid',   icon: '🚫' },
-    unknown: { text: '정보 불충분',       cls: 'caution', icon: '🔍' },
+    safe:    { text: '섭취 가능 (추정)', cls: 'safe',    icon: '✅' },
+    caution: { text: '주의 필요 (추정)', cls: 'caution', icon: '⚠️' },
+    avoid:   { text: '피하는 것이 좋음 (추정)', cls: 'avoid', icon: '🚫' },
+    unknown: { text: '정보 불충분',      cls: 'caution', icon: '🔍' },
   };
-  const s = statusLabel[data.status] || statusLabel.unknown;
+  const s = statusLabel[data.heuristicStatus] || statusLabel.unknown;
 
-  // AI가 정리한 출처 링크
-  const sourceItems = (data.sources || []).map(r => `
+  const webItems = (data.results || []).map(r => `
     <div class="web-item">
       <a href="${r.link}" target="_blank" rel="noopener">${r.title}</a>
+      <p>${r.snippet}</p>
     </div>`).join('');
 
   document.getElementById('resultView').innerHTML = `
-    <p style="font-size:0.82rem;color:#bfa0a8;margin-bottom:1rem;">🤖 AI가 웹 검색 결과를 분석했어요 · "${q}"</p>
+    <p style="font-size:0.82rem;color:#bfa0a8;margin-bottom:1rem;">🌐 웹에서 검색했어요 · "${q}" 검색 결과</p>
     <div class="result-card ${s.cls}">
       <div class="status-badge badge-${s.cls}">${s.icon} ${s.text}</div>
-      <div class="result-food-name">${data.food || q}</div>
-      <p class="result-summary">${data.summary || ''}</p>
-      <p class="result-detail">${data.detail || ''}</p>
-      ${data.tips ? `<p class="result-tips">${data.tips}</p>` : ''}
-      <p style="margin-top:0.75rem;font-size:0.75rem;color:#bfa0a8;">※ 웹 검색 기반 AI 분석 결과입니다. 반드시 산부인과 의사와 상담하세요.</p>
+      <div class="result-food-name">${q}</div>
+      <p class="result-summary">DB에 등록되지 않은 음식이에요. 웹 검색 결과를 참고하세요.</p>
+      <p class="result-detail" style="font-size:0.82rem;color:#bfa0a8;">
+        ※ AI가 검색 결과를 분석한 추정값입니다. 반드시 산부인과 의사와 상담하세요.
+      </p>
     </div>
-    ${sourceItems ? `<div class="web-results"><h3>📎 참고한 검색 결과</h3>${sourceItems}</div>` : ''}
+    ${webItems ? `<div class="web-results"><h3>🌐 관련 검색 결과</h3>${webItems}</div>` : ''}
     ${backBtn()}`;
 }
 
+// ── 카드 HTML 생성 ──
+function cardHTML(f) {
+  const statusInfo = {
+    safe:    { text: '섭취 가능',     cls: 'safe',    icon: '✅' },
+    caution: { text: '주의 필요',     cls: 'caution', icon: '⚠️' },
+    avoid:   { text: '피하는 것이 좋아요', cls: 'avoid', icon: '🚫' },
+  };
+  const s = statusInfo[f.status];
+  return `
+    <div class="result-card ${s.cls}">
+      <div class="status-badge badge-${s.cls}">${s.icon} ${s.text}</div>
+      <div class="result-food-name">${f.name}</div>
+      <p class="result-summary">${f.summary}</p>
+      <p class="result-detail">${f.detail}</p>
+      ${f.tips ? `<p class="result-tips">${f.tips}</p>` : ''}
+    </div>`;
+}
 
 function backBtn() {
   return `<button onclick="showView('home')" style="margin-top:1rem;background:none;border:1.5px solid #eedcdc;color:#b84d62;border-radius:20px;padding:0.5rem 1.25rem;cursor:pointer;font-family:var(--sans);font-size:0.88rem;">← 홈으로 돌아가기</button>`;
